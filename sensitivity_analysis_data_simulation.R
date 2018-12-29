@@ -2,72 +2,59 @@ rm(list=ls())
 gc()
 
 ## Locate and read data
-# setwd("C:/Users/lul165/Documents/lly/Rfiles")
+setwd("C:/Users/liuxi/Google Drive/Dissertation/Github project/sensitivity_analysis_data_simulation")
 
 rsdata<-read.csv("rs_notre_sites_state.csv",na.strings=c(""))
-
-
 rsdata<-subset(rsdata,shortseg==0,na.strings=c(""))
-
-
 rsdata<-rsdata[order(rsdata$no),]
 rsdata$ints=ifelse(rsdata$no_ints>0,1,0)
 
+## Data used for analysis
+mdata<-data.frame(
+  lnaadt0308=rsdata$lnaadt0308,
+  lnlength=rsdata$lnlength,
+  rhr567=rsdata$rhr567,
+  curve_density=rsdata$curve_density,
+  access_density=rsdata$access_density,
+  d_seg_mi=rsdata$d_seg_mi,
+  width=rsdata$width,
+  highspeed=rsdata$highspeed,
+  r_s_pave=rsdata$r_s_pave,
+  ints=ifelse(rsdata$no_ints>0,1,0)
+)
+num_cov<-length(mdata)
 
 ## Create simulation sample and result container
 ## Results including ASMD(absolute standardized mean difference) before and after matching
 ## and coefficient of treatment, using 1000 samples in the simulation
 sampleno<-1000
 
-simul_data<-vector("list",sampleno) 
-asmd_mean_bf<-vector("list",sampleno) 
-asmd_ub_bf<-vector("list",sampleno)
-asmd_mean_psm<-vector("list",sampleno)
-asmd_mean_bpsm<-vector("list",sampleno)
-asmd_ub_psm<-vector("list",sampleno)
-asmd_ub_bpsm<-vector("list",sampleno)
-coeff_tre_psm<-vector("list",sampleno)
-coeff_tre_bpsm<-vector("list",sampleno)
-mcmc_time<-vector("list",sampleno)
+simul_data<- # Simulated data container
+asmd_mean_bf<-asmd_ub_bf<-asmd_mean_psm<-asmd_mean_bpsm<-asmd_ub_psm<-asmd_ub_bpsm<- # Covariate balance metric container
+coeff_tre_psm<-coeff_tre_bpsm<- # Treatment effect estimates container
+mcmc_time<-vector("list",sampleno) # MCMC time container
 
 
-## Data and variables used for simulation
-  data=list(
-    
-    lnaadt0308=rsdata$lnaadt0308,
-    lnlength=rsdata$lnlength,
-    n=length(rsdata$total_crash),
-    rhr567=rsdata$rhr567,
-    cd=rsdata$curve_density,
-    ad=rsdata$access_density,
-    dsm=rsdata$d_seg_mi,
-    width=rsdata$width,
-    hspeed=rsdata$highspeed,
-    rspave=rsdata$r_s_pave,
-    ints=ifelse(rsdata$no_ints>0,1,0)
-  )
-
-## Data used for matching analysis
-  mdata<-data.frame(
-    lnaadt0308=rsdata$lnaadt0308,
-    lnlength=rsdata$lnlength,
-    rhr567=rsdata$rhr567,
-    curve_density=rsdata$curve_density,
-    access_density=rsdata$access_density,
-    d_seg_mi=rsdata$d_seg_mi,
-    width=rsdata$width,
-    highspeed=rsdata$highspeed,
-    r_s_pave=rsdata$r_s_pave,
-    ints=ifelse(rsdata$no_ints>0,1,0)
-  )
-
-## Data simulation
-ptm<-proc.time()
+## Data used for simulation
+data=list(
   
-for(i in 1:1000){
-  
-  ## Define simulation model
-  simul_model="
+  lnaadt0308=rsdata$lnaadt0308,
+  lnlength=rsdata$lnlength,
+  n=length(rsdata$total_crash),
+  rhr567=rsdata$rhr567,
+  cd=rsdata$curve_density,
+  ad=rsdata$access_density,
+  dsm=rsdata$d_seg_mi,
+  width=rsdata$width,
+  hspeed=rsdata$highspeed,
+  rspave=rsdata$r_s_pave,
+  ints=ifelse(rsdata$no_ints>0,1,0)
+)
+
+
+
+## Define simulation model
+simul_model="
   
   data{
   
@@ -84,7 +71,7 @@ for(i in 1:1000){
   
   ## Treatment variable simulation
   ## Treatment variable is correlated with observed and unobserved covariates
-  rs_sm[i] ~ dbern(pr[i])
+  rs[i] ~ dbern(pr[i])
   
   logit(pr[i])<- -1.420-0.316*lnaadt0308[i]+0.120*lnlength[i]-0.041*rhr567[i]-0.007*cd[i]-0.022*ad[i]-0.014*dsm[i]
   +0.003*width[i]-1.085*hspeed[i]+0.346*rspave[i]-0.353*ints[i]+0.5*aggre_dr[i]
@@ -93,7 +80,7 @@ for(i in 1:1000){
   ## Outcome variable is defined as crash frequency, correlated with treatment, observed and unobserved covariates
   ## Outcome variable following negative binomial distribution
   mu[i]<- -5.732+0.709*lnaadt0308[i]+1*lnlength[i]+0.049*rhr567[i]+0.033*cd[i]+0.002*dsm[i]
-  -0.149*hspeed[i]-0.024*rspave[i]+0.064*ints[i]+0.1*aggre_dr[i]-0.1*rs_sm[i]
+  -0.149*hspeed[i]-0.024*rspave[i]+0.064*ints[i]+0.1*aggre_dr[i]-0.1*rs[i]
   
   lambda[i]<-exp(mu[i])
   p[i]<-r/(r+lambda[i])
@@ -107,47 +94,72 @@ for(i in 1:1000){
   }
   
   "
+
+writeLines( simul_model, con="simul_model.txt" )
+
+## Define Bayesian propensity score model
+modelString = "
+
+model{
+
+## Model specification
+
+for (i in 1:n){
+rs[i] ~ dbern(p[i])
+
+logit(p[i]) <- b0+b1*lnaadt0308[i]+b2*lnlength[i]+b3*rhr567[i]+b4*cd[i]+b5*ad[i]+b6*dsm[i]+b7*width[i]+b8*hspeed[i]+b9*rspave[i]+b10*ints[i]
+
+
+}
+
+
+## Prior setting for each parameter
+## Use non-informative priors (normal distribution)
+
+b0 ~ dnorm(intercept,1/2^2)
+b1 ~ dnorm(0,1/1^2)
+b2 ~ dnorm(0,1/1^2)
+b3 ~ dnorm(0,1/1^2)
+b4 ~ dnorm(0,1/1^2)
+b5 ~ dnorm(0,1/1^2)
+b6 ~ dnorm(0,1/1^2)
+b7 ~ dnorm(0,1/1^2)
+b8 ~ dnorm(-1,1/1^2)
+b9 ~ dnorm(0,1/1^2)
+b10 ~ dnorm(0,1/1^2)
+
+#examine the posterior
+#lambda_mean<-mean(lambda)
+p_mean <- mean(p)
+
+#examine the likelihood of data
+#y_mean <- mean(rs)
+
+}
+"
+writeLines( modelString , con="psmodel.txt" )
+
+
+## Data simulation
+ptm<-proc.time()
   
-  writeLines( simul_model, con="simul_model.txt" )
+for(i in 1:1000){
   
+ 
   
-  ## Use JAGS for the sampling
-  ## Required JAGS installation: http://mcmc-jags.sourceforge.net/
-  # install.packages("rjags")
+  ## Define parameters of interest in the simulations
+  parameters = c("y","rs","aggre_dr")
   
-  library(rjags)
+  ## Simulation
+  source("jags_simulation.R")
+  simul_sample<-simul_data("simul_model.txt",data,parameters)
   
-  ## Store outcome, treatment and unobserved variables
-  parameters = c("y","rs_sm","aggre_dr")
-  
-  ## Use JAGS model for to generate one sample
-  jagsModel = jags.model( "simul_model.txt" , data=data, n.chains=1 , n.adapt=1000)
-  simulated_codasamples = coda.samples(jagsModel,variable.names=parameters,thin=1,n.iter=1)
-  
-  ## Write out the sample for further analysis
-  sd.sp<-as.matrix(simulated_codasamples)
-  sd.sp<-t(sd.sp)
-  
-  aggre_dr<-data.frame(sd.sp[1:length(rsdata$total_crash)])
-  colnames(aggre_dr)<-c("aggre_dr")
-  
-  rs_sm<-data.frame(sd.sp[(length(rsdata$total_crash)+1):(length(rsdata$total_crash)*2)])
-  colnames(rs_sm) <-c("rs_sm")
-  
-  y<-data.frame(sd.sp[(length(rsdata$total_crash)*2+1):(length(rsdata$total_crash)*3)])
-  colnames(y) <-c("y")
-  
-  ## Check the simulated variables
-  sum(aggre_dr$aggre_dr)
-  sum(rs_sm$rs_sm)
-  mean(y$y)
-  
+  summary(simul_sample)
   
   ## Add the simulated varaible to analytic data
-  mdata$aggre_dr<-aggre_dr$aggre_dr
-  mdata$rs<-rs_sm$rs_sm
-  mdata$y<-y$y
-  
+  mdata[names(simul_sample)]<-simul_sample
+ 
+  summary(mdata)
   
   # ## Verify unobserved variable simulation
   # library(MASS)
@@ -161,45 +173,23 @@ for(i in 1:1000){
   
   ## Propensity score matching analysis
   
-  ## Function to compute matching covariate balance metric ASMD
+  ## Produce covariate balance metric ASMD
   
   ## Before matching ASMD
-  matching_asmd_bf<-function(var_con_bf,var_tre_bf){
-    asmd<-abs(mean(var_tre_bf)-mean(var_con_bf))/((sd(var_tre_bf)^2+sd(var_con_bf)^2)/2)^0.5
-    return(asmd)
+  
+  asmd.table.bf<-matrix(nrow=1,ncol=num_cov)
+  tre_data_bf<-subset(mdata,mdata$rs==1)
+  con_data_bf<-subset(mdata,mdata$rs==0)
+  
+  source("matching_asmd.R")
+  for (i in 1:num_cov){
+    
+    asmd.table.bf[,i]<-matching_asmd_bf(tre_data_bf[[i]],con_data_bf[[i]])
   }
-  
-  ## After matching ASMD
-  matching_asmd_af<-function(var_con_bf,var_tre_bf,var_con_af,var_tre_af){
-    asmd<-abs(mean(var_tre_af)-mean(var_con_af))/((sd(var_tre_bf)^2+sd(var_con_bf)^2)/2)^0.5
-    return(asmd)
-  }
-  
-  ## Covariate balance before-matching acording to ASMD values
-  
-  asmd_lnaadt0308<-matching_asmd_bf(mdata$lnaadt0308[mdata$rs==0],mdata$lnaadt0308[mdata$rs==1])
-  asmd_lnlength<-matching_asmd_bf(mdata$lnlength[mdata$rs==0],mdata$lnlength[mdata$rs==1])
-  asmd_rhr567<-matching_asmd_bf(mdata$rhr567[mdata$rs==0],mdata$rhr567[mdata$rs==1])
-  asmd_cd<-matching_asmd_bf(mdata$curve_density[mdata$rs==0],mdata$curve_density[mdata$rs==1])
-  asmd_ad<-matching_asmd_bf(mdata$access_density[mdata$rs==0],mdata$access_density[mdata$rs==1])
-  
-  asmd_d<-matching_asmd_bf(mdata$d_seg_mi[mdata$rs==0],mdata$d_seg_mi[mdata$rs==1])
-  asmd_width<-matching_asmd_bf(mdata$width[mdata$rs==0],mdata$width[mdata$rs==1])
-  asmd_hspeed<-matching_asmd_bf(mdata$highspeed[mdata$rs==0],mdata$highspeed[mdata$rs==1])
-  asmd_rspave<-matching_asmd_bf(mdata$r_s_pave[mdata$rs==0],mdata$r_s_pave[mdata$rs==1])
-  asmd_ints<-matching_asmd_bf(mdata$ints[mdata$rs==0],mdata$ints[mdata$rs==1])
-  
-  asmd.table.bf<-data.frame(
-    asmd_lnaadt0308,asmd_lnlength,asmd_rhr567,asmd_cd,asmd_ad,
-    asmd_d,asmd_width,asmd_hspeed,asmd_rspave,asmd_ints
-  )
-  ## Taking average of ASMD value of all variables
-  asmd.mean.bf<-rowMeans(asmd.table.bf)
-  asmd.table.bf
-  asmd.mean.bf
-  
-  ##Unobserved covariate ASMD before
-  asmd_ub.bf<-matching_asmd_bf(mdata$aggre_dr[mdata$rs==0],mdata$aggre_dr[mdata$rs==1])
+  asmd.mean.bf<-mean(asmd.table.bf)
+
+  ##Unobserved covariate ASMD before matching
+  asmd_ub.bf<-matching_asmd_bf(tre_data_bf$aggre_dr,con_data_bf$aggre_dr)
   asmd_ub.bf
   
   ## Traditional propensity score matching (PSM)
@@ -218,7 +208,7 @@ for(i in 1:1000){
   library(MatchIt)
   
   ## Matching specification: 1:2 caliper matching (caliper width = 0.2*sd(propensity scores))
-  match.nearest1 <- matchit(rs ~ lnaadt0308+lnlength+rhr567+curve_density+access_density+d_seg_mi+width+highspeed+r_s_pave+ints,
+  match.nearest.psm <- matchit(rs ~ lnaadt0308+lnlength+rhr567+curve_density+access_density+d_seg_mi+width+highspeed+r_s_pave+ints,
                             #formula for propensity score
                             data = mdata,
                             method="nearest", #matching method
@@ -233,42 +223,31 @@ for(i in 1:1000){
                             # mahvars=c("psm_ps") # if two units has same matching distance, how to choose
                             
   )
-  summary(match.nearest1)
-  # summary(match.nearest1,standardize = TRUE)
-  # plot(match.nearest1, type="hist", col="grey")
+  summary(match.nearest.psm)
+  # summary(match.nearest.psm,standardize = TRUE)
+  # plot(match.nearest.psm, type="hist", col="grey")
   
-  afpsm <- match.data(match.nearest1)
+  afpsm <- match.data(match.nearest.psm)
   summary(afpsm$distance)
   summary(afpsm$psm_ps)
   
   ## Covariable balance after PSM
+  asmd.table.psm<-matrix(nrow=1,ncol=num_cov)
+  tre_data_psm<-subset(afpsm,afpsm$rs==1)
+  con_data_psm<-subset(afpsm,afpsm$rs==0)
   
-  asmd_lnaadt0308<-matching_asmd_af(mdata$lnaadt0308[mdata$rs==0],mdata$lnaadt0308[mdata$rs==1],afpsm$lnaadt0308[afpsm$rs==0],afpsm$lnaadt0308[afpsm$rs==1])
-  asmd_lnlength<-matching_asmd_af(mdata$lnlength[mdata$rs==0],mdata$lnlength[mdata$rs==1],afpsm$lnlength[afpsm$rs==0],afpsm$lnlength[afpsm$rs==1])
-  asmd_rhr567<-matching_asmd_af(mdata$rhr567[mdata$rs==0],mdata$rhr567[mdata$rs==1],afpsm$rhr567[afpsm$rs==0],afpsm$rhr567[afpsm$rs==1])
-  asmd_cd<-matching_asmd_af(mdata$curve_density[mdata$rs==0],mdata$curve_density[mdata$rs==1],afpsm$curve_density[afpsm$rs==0],afpsm$curve_density[afpsm$rs==1])
-  asmd_ad<-matching_asmd_af(mdata$access_density[mdata$rs==0],mdata$access_density[mdata$rs==1],afpsm$access_density[afpsm$rs==0],afpsm$access_density[afpsm$rs==1])
+  for (i in 1:num_cov){
+    
+    asmd.table.psm[,i]<-matching_asmd_af(tre_data_bf[[i]],con_data_bf[[i]],
+                                         tre_data_psm[[i]],con_data_psm[[i]])
+  }
+  asmd.mean.psm<-mean(asmd.table.psm)
   
-  asmd_d<-matching_asmd_af(mdata$d_seg_mi[mdata$rs==0],mdata$d_seg_mi[mdata$rs==1],afpsm$d_seg_mi[afpsm$rs==0],afpsm$d_seg_mi[afpsm$rs==1])
-  asmd_width<-matching_asmd_af(mdata$width[mdata$rs==0],mdata$width[mdata$rs==1],afpsm$width[afpsm$rs==0],afpsm$width[afpsm$rs==1])
-  asmd_hspeed<-matching_asmd_af(mdata$highspeed[mdata$rs==0],mdata$highspeed[mdata$rs==1],afpsm$highspeed[afpsm$rs==0],afpsm$highspeed[afpsm$rs==1])
-  asmd_rspave<-matching_asmd_af(mdata$r_s_pave[mdata$rs==0],mdata$r_s_pave[mdata$rs==1],afpsm$r_s_pave[afpsm$rs==0],afpsm$r_s_pave[afpsm$rs==1])
-  asmd_ints<-matching_asmd_af(mdata$ints[mdata$rs==0],mdata$ints[mdata$rs==1],afpsm$ints[afpsm$rs==0],afpsm$ints[afpsm$rs==1])
-  
-  asmd.table.psm<-data.frame(
-    asmd_lnaadt0308,asmd_lnlength,asmd_rhr567,asmd_cd,asmd_ad,
-    asmd_d,asmd_width,asmd_hspeed,asmd_rspave,asmd_ints
-  )
-  
-  asmd.mean.psm<-rowMeans(asmd.table.psm)
-  asmd.table.psm
-  asmd.mean.psm
-  
-  ## Unobserved covariate ASMD after PSM
-  ## Check to see if this variable also got balanced by the matching
-  asmd_ub.psm<-matching_asmd_af(mdata$aggre_dr[mdata$rs==0],mdata$aggre_dr[mdata$rs==1],afpsm$aggre_dr[afpsm$rs==0],afpsm$aggre_dr[afpsm$rs==1])
+  ##Unobserved covariate ASMD after PSM
+  asmd_ub.psm<-matching_asmd_af(tre_data_bf$aggre_dr,con_data_bf$aggre_dr,
+                                tre_data_psm$aggre_dr,con_data_psm$aggre_dr)
   asmd_ub.psm
-  asmd_ub.bf
+  
   
   ## Outcome model - Negative binomial regression
   
@@ -276,9 +255,6 @@ for(i in 1:1000){
   library(MASS)
   nbmodel_psm=glm.nb(y~lnaadt0308+lnlength+rhr567+curve_density+d_seg_mi+r_s_pave+highspeed+ints+rs,data=afpsm)
   # summary(nbmodel_psm)
-  
-  coefficient<-coef(nbmodel_psm)["rs"]
-  
   
   ## Store all the simulation and PSM results
   
@@ -291,16 +267,14 @@ for(i in 1:1000){
   # write.csv(simul_data,"simul_data_test.csv")
   
   ## Bayesian propensity score matching (PSM)
-  ## Using JAGS, but package R2jags in R for parallel computation.
-  # install.packages("R2jags")
-  library(R2jags)
-  
+
+
   ## Data used for Bayesian modeling
-  data=list(
-    y=mdata$rs,
+  bpsmdata=list(
+    rs=mdata$rs,
     lnaadt0308=mdata$lnaadt0308,
     lnlength=mdata$lnlength,
-    n=length(mdata$total_crash),
+    n=length(mdata$lnaadt0308),
     rhr567=mdata$rhr567,
     cd=mdata$curve_density,
     ad=mdata$access_density,
@@ -313,99 +287,31 @@ for(i in 1:1000){
     
   )
   
-  ## Define Bayesian propensity score model
-  modelString = "
-
-  model{
+    ## Parameters to save, estimates of Bayesian propensity scores
+  parameters.bpsm = c("p")
   
-  ## Model specification
-  
-  for (i in 1:n){
-  y[i] ~ dbern(p[i])
-  
-  logit(p[i]) <- b0+b1*lnaadt0308[i]+b2*lnlength[i]+b3*rhr567[i]+b4*cd[i]+b5*ad[i]+b6*dsm[i]+b7*width[i]+b8*hspeed[i]+b9*rspave[i]+b10*ints[i]
-  
-   
-  }
-  
-  
-  ## Prior setting for each parameter
-  ## Use non-informative priors (normal distribution)
-  
-  b0 ~ dnorm(intercept,1/2^2)
-  b1 ~ dnorm(0,1/1^2)
-  b2 ~ dnorm(0,1/1^2)
-  b3 ~ dnorm(0,1/1^2)
-  b4 ~ dnorm(0,1/1^2)
-  b5 ~ dnorm(0,1/1^2)
-  b6 ~ dnorm(0,1/1^2)
-  b7 ~ dnorm(0,1/1^2)
-  b8 ~ dnorm(-1,1/1^2)
-  b9 ~ dnorm(0,1/1^2)
-  b10 ~ dnorm(0,1/1^2)
-  
-  #examine the posterior
-  #lambda_mean<-mean(lambda)
-  p_mean <- mean(p)
-  
-  #examine the likelihood of data
-  #y_mean <- mean(y)
-  
-  }
-  "
-  writeLines( modelString , con="psmodel.txt" )
-  
-  ## Parameters to save, estimates of Bayesian propensity scores
-  parameters = c("p")
-  
-  ## Parallel sampling
-  ptm_mcmc<-proc.time()
-  
-  jagsmodel.p=
-    jags.parallel(
-      data=data, 
-      parameters.to.save=parameters, 
-      model.file="psmodel.txt",
-      n.chains=4, # number of Markov Chains
-      n.iter=800, # 80000 number samples in each chain
-      n.burnin=50, # 5000 burning steps before save the sample
-      n.thin=3, # Thinning steps remove autocorrelation
-      n.cluster = 4, # use 4 cores for parallel computation
-      DIC=TRUE, working.directory=NULL, 
-      jags.seed = 123,
-      # refresh = n.iter/50, 
-      # progress.bar = "text", digits=5,
-      RNGname = c("Wichmann-Hill", "Marsaglia-Multicarry",
-                  "Super-Duper", "Mersenne-Twister"),
-      # jags.module = c("glm","dic")
-      export_obj_names=NULL,
-      envir = .GlobalEnv
-    )
-  nchain=4
-  niter=80000
-  nburnin=5000
+  ## Bayesian modeling using MCMC simulating
+  nchain=ncore=4
+  niter=800
+  nburnin=50
   nthin=3
   samplenum<-(niter-nburnin)/nthin*nchain # print sample number
+  
+  source("jags_simulation.R")
+  
+  ptm_mcmc<-proc.time()
+  
+  ps<-jags_modeling("psmodel.txt",bpsmdata,parameters.bpsm,nchain,niter,nburnin,nthin,ncore)
+  
   durtime_mcmc <- proc.time()-ptm_mcmc
   
-  jagsmodel.p.mcmc<-as.mcmc(jagsmodel.p)
-  # source("posteriorSummaryStats.R")
-  # print(summarizePost(jagsmodel.p.mcmc, filters = c("p")) )
-  
-  ## Output the sample from mcmc object and write them into analytic data
-  ps.sp<-as.matrix(jagsmodel.p.mcmc)
-  ps<-as.matrix(colMeans(ps.sp))
-  ps<-as.data.frame(ps[-1,])
-  colnames(ps)<-c("ps")
-  ps$X <- rownames(ps)
-  ps$no<-gsub("[^0-9]", "", ps$X) 
-  ps<-ps[order(as.numeric(ps$no)),]
+  ## Add Bayesian PS to the analytic data
   mdata$ps<-as.numeric(ps$ps)
   
   ## Conduct Nearest-neighbour matching for BPSM
   library(MatchIt)
   
-  match.nearest2 <- matchit(rs ~ lnaadt0308+lnlength+rhr567+curve_density+access_density+d_seg_mi+width+highspeed+r_s_pave+ints,
+  match.nearest.bpsm <- matchit(rs ~ lnaadt0308+lnlength+rhr567+curve_density+access_density+d_seg_mi+width+highspeed+r_s_pave+ints,
                             
                             #formula for propensity score
                             data = mdata,
@@ -418,51 +324,42 @@ for(i in 1:1000){
                             reestimate = FALSE, #re-estimating distance after discarding observations
                             m.order = "largest", #order in which to match treated units
                             caliper = 0.20*sd(mdata$ps),
-                            mahvars=c("ps")
+                            # mahvars=c("ps")
   )
-  summary(match.nearest2)
-  # summary(match.nearest1,standardize = TRUE)
-  # plot(match.nearest1, type="hist", col="grey")
-  afbpsm <- match.data(match.nearest2)
+  summary(match.nearest.bpsm)
+  # summary(match.nearest.bpsm,standardize = TRUE)
+  # plot(match.nearest.bpsm, type="hist", col="grey")
+  afbpsm <- match.data(match.nearest.bpsm)
   
   summary(afbpsm$distance)
   summary(afbpsm$ps)
   
   ## Covariable balance after BPSM
+  source("matching_asmd.R")
   
-  asmd_lnaadt0308<-matching_asmd_af(mdata$lnaadt0308[mdata$rs==0],mdata$lnaadt0308[mdata$rs==1],afbpsm$lnaadt0308[afbpsm$rs==0],afbpsm$lnaadt0308[afbpsm$rs==1])
-  asmd_lnlength<-matching_asmd_af(mdata$lnlength[mdata$rs==0],mdata$lnlength[mdata$rs==1],afbpsm$lnlength[afbpsm$rs==0],afbpsm$lnlength[afbpsm$rs==1])
-  asmd_rhr567<-matching_asmd_af(mdata$rhr567[mdata$rs==0],mdata$rhr567[mdata$rs==1],afbpsm$rhr567[afbpsm$rs==0],afbpsm$rhr567[afbpsm$rs==1])
-  asmd_cd<-matching_asmd_af(mdata$curve_density[mdata$rs==0],mdata$curve_density[mdata$rs==1],afbpsm$curve_density[afbpsm$rs==0],afbpsm$curve_density[afbpsm$rs==1])
-  asmd_ad<-matching_asmd_af(mdata$access_density[mdata$rs==0],mdata$access_density[mdata$rs==1],afbpsm$access_density[afbpsm$rs==0],afbpsm$access_density[afbpsm$rs==1])
+  asmd.table.bpsm<-matrix(nrow=1,ncol=num_cov)
+  tre_data_bpsm<-subset(afbpsm,afbpsm$rs==1)
+  con_data_bpsm<-subset(afbpsm,afbpsm$rs==0)
   
-  asmd_d<-matching_asmd_af(mdata$d_seg_mi[mdata$rs==0],mdata$d_seg_mi[mdata$rs==1],afbpsm$d_seg_mi[afbpsm$rs==0],afbpsm$d_seg_mi[afbpsm$rs==1])
-  asmd_width<-matching_asmd_af(mdata$width[mdata$rs==0],mdata$width[mdata$rs==1],afbpsm$width[afbpsm$rs==0],afbpsm$width[afbpsm$rs==1])
-  asmd_hspeed<-matching_asmd_af(mdata$highspeed[mdata$rs==0],mdata$highspeed[mdata$rs==1],afbpsm$highspeed[afbpsm$rs==0],afbpsm$highspeed[afbpsm$rs==1])
-  asmd_rspave<-matching_asmd_af(mdata$r_s_pave[mdata$rs==0],mdata$r_s_pave[mdata$rs==1],afbpsm$r_s_pave[afbpsm$rs==0],afbpsm$r_s_pave[afbpsm$rs==1])
-  asmd_ints<-matching_asmd_af(mdata$ints[mdata$rs==0],mdata$ints[mdata$rs==1],afbpsm$ints[afbpsm$rs==0],afbpsm$ints[afbpsm$rs==1])
+  for (i in 1:num_cov){
+    
+    asmd.table.bpsm[,i]<-matching_asmd_af(tre_data_bf[[i]],con_data_bf[[i]],
+                                         tre_data_bpsm[[i]],con_data_bpsm[[i]])
+  }
+  asmd.mean.bpsm<-mean(asmd.table.bpsm)
   
-  asmd.table.bpsm<-data.frame(
-    asmd_lnaadt0308,asmd_lnlength,asmd_rhr567,asmd_cd,asmd_ad,
-    asmd_d,asmd_width,asmd_hspeed,asmd_rspave,asmd_ints
-  )
-  
-  asmd.mean.bpsm<-rowMeans(asmd.table.bpsm)
-  asmd.table.bpsm
-  asmd.mean.bpsm
-  
-  ## Unobserved covariate ASMD after PSM
-  ## Check to see if this variable also got balanced by the matching
-  asmd_ub.bpsm<-matching_asmd_af(mdata$aggre_dr[mdata$rs==0],mdata$aggre_dr[mdata$rs==1],afbpsm$aggre_dr[afbpsm$rs==0],afbpsm$aggre_dr[afbpsm$rs==1])
+  ##Unobserved covariate ASMD after bpsm
+  asmd_ub.bpsm<-matching_asmd_af(tre_data_bf$aggre_dr,con_data_bf$aggre_dr,
+                                tre_data_bpsm$aggre_dr,con_data_bpsm$aggre_dr)
   asmd_ub.bpsm
-  asmd_ub.bf
+  
   
   ## Outcome model using Negarive binomial regression
   library(MASS)
   nbmodel_bpsm=glm.nb(y~lnaadt0308+lnlength+rhr567+curve_density+d_seg_mi+r_s_pave+highspeed+ints+rs,data=afbpsm)
   # summary(nbmodel_bpsm)
   
-  coef(nbmodel_bpsm)["rs"]
+  # coef(nbmodel_bpsm)["rs"]
   
   
   ## Store BPSM results
@@ -506,62 +403,4 @@ for (i in 1:1000){
   data_name <- paste(paste("data_", i, ".csv",sep = ""))
   write.csv(simul_data[i],data_name,dir="C:/Users/lul165/Documents/lly/Rfiles/simual_data")
 }
-
-
-## Plot distribution of treatment and control group for comparing PSM and BPSM
-
-library(ggplot2)
-
-## Distribution of ASMD for unobserved variables
-aggre_psm<-ggplot(add,aes(x=add$aggre_psm))+
-  geom_density(color="darkblue", fill="lightblue")+
-  scale_x_continuous(name="ASMD")+
-  scale_y_continuous(name="Density")+
-  ggtitle("ASMD of unobserved (PSM)")+
-  theme_bw()+theme(plot.title=element_text(size=24,face="bold",hjust=0.5),text=element_text(size=20),legend.position = "bottom")
-aggre_psm
-
-aggre_bpsm<-ggplot(add,aes(x=add$aggre_bpsm))+
-  geom_density(color="darkred", fill="pink")+
-  scale_x_continuous(name="ASMD")+
-  scale_y_continuous(name="Density")+
-  ggtitle("ASMD of unobserved (BPSM)")+
-  theme_bw()+theme(plot.title=element_text(size=24,face="bold",hjust=0.5),text=element_text(size=20),legend.position = "bottom")
-aggre_bpsm
-
-## ASMD observed
-asmd_mean_psm<-ggplot(add,aes(x=add$asmd_mean_psm))+
-  geom_density(color="darkblue", fill="lightblue")+
-  scale_x_continuous(name="ASMD")+
-  scale_y_continuous(name="Density")+
-  ggtitle("ASMD of observed (PSM)")+
-  theme_bw()+theme(plot.title=element_text(size=24,face="bold",hjust=0.5),text=element_text(size=20),legend.position = "bottom")
-asmd_mean_psm
-
-asmd_mean_bpsm<-ggplot(add,aes(x=add$asmd_mean_bpsm))+
-  geom_density(color="darkred", fill="pink")+
-  scale_x_continuous(name="ASMD")+
-  scale_y_continuous(name="Density")+
-  ggtitle("ASMD of observed (BPSM)")+
-  theme_bw()+theme(plot.title=element_text(size=24,face="bold",hjust=0.5),text=element_text(size=20),legend.position = "bottom")
-asmd_mean_bpsm
-
-
-## CMF Bias
-
-bias_psm<-ggplot(add,aes(x=add$bias_psm))+
-  geom_density(color="darkblue", fill="lightblue")+
-  scale_x_continuous(name="CMF estimates - True CMF")+
-  scale_y_continuous(name="Density")+
-  ggtitle("Bias of CMF(PSM)")+
-  theme_bw()+theme(plot.title=element_text(size=24,face="bold",hjust=0.5),text=element_text(size=20),legend.position = "bottom")
-bias_psm
-
-bias_bpsm<-ggplot(add,aes(x=add$bias_bpsm))+
-  geom_density(color="darkred", fill="pink")+
-  scale_x_continuous(name="CMF estimates - True CMF")+
-  scale_y_continuous(name="Density")+
-  ggtitle("Bias of CMF(BPSM)")+
-  theme_bw()+theme(plot.title=element_text(size=24,face="bold",hjust=0.5),text=element_text(size=20),legend.position = "bottom")
-bias_bpsm
 
