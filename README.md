@@ -1,6 +1,6 @@
 # Sensitivity-analysis-on-heterogeneity-effect-using-data-simulation
 
-this project is a research on safety treatment effect estimates of rumble strips.
+this project is a research on treatment effect estimates of highway safety countermeasure.
 
 The purpose of this project is to:
 1. Explore the sensitivity of matching methods to unobserved heterogeneity.
